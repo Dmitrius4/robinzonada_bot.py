@@ -1,3 +1,24 @@
+"""
+ROBINZONADA - Telegram Bot for board game
+Requirements: python-telegram-bot>=20.0, python-dotenv
+
+Installation:
+    pip install python-telegram-bot python-dotenv
+
+Setup:
+    1. Create bot via @BotFather, get token
+    2. Create .env file with: BOT_TOKEN=your_token_here
+    3. Run: python robinzonada_bot.py
+
+Commands:
+    /newgame - Create new game lobby
+    /join - Join current game
+    /startgame - Start game (need 3+ players)
+    /rules - Game rules summary
+    /status - Current game status
+    /hand - Show your cards (DM only)
+"""
+
 import os
 import random
 import logging
@@ -156,7 +177,8 @@ class GameState:
     pending_action: Optional[str] = None
     pending_user: Optional[int] = None
 
-============================================================================
+
+# ============================================================================
 # HELPER FUNCTIONS
 # ============================================================================
 
@@ -336,7 +358,8 @@ def format_players_list(game):
         lines.append(f"{status} {p.first_name}{sick}{leader}{current}")
     return "\n".join(lines)
 
-============================================================================
+
+# ============================================================================
 # GAME LOGIC FUNCTIONS
 # ============================================================================
 
@@ -345,33 +368,33 @@ async def start_game_logic(context, chat_id):
     if not game or len(game.players) < 3:
         await context.bot.send_message(chat_id, "❌ Нужно минимум 3 игрока!")
         return
-    
+
     game.phase = "setup"
     num_players = len(game.players)
-    
+
     food, water = STARTING_RESOURCES.get(num_players, (10, 12))
     game.food = food
     game.water = water
     game.wood = 0
     game.raft_cards = 0
-    
+
     game.weather_deck = create_weather_deck()
     game.wreckage_deck = create_wreckage_deck()
     game.weather_discard = []
     game.wreckage_discard = []
-    
+
     cards_per_player = 4 if num_players <= 8 else 3
     for pid in game.player_order:
         player = game.players[pid]
         player.hand = draw_wreckage(game, cards_per_player)
-    
+
     game.round_num = 1
     game.first_player_idx = 0
     game.current_player_idx = 0
     game.hurricane_triggered = False
-    
+
     first_name = game.players[game.player_order[0]].first_name
-    
+
     await context.bot.send_message(
         chat_id,
         f"🌴 РОБИНЗОНАДА НАЧИНАЕТСЯ! 🌴\n\n"
@@ -382,38 +405,38 @@ async def start_game_logic(context, chat_id):
         f"{format_players_list(game)}\n\n"
         f"🎣 Первый игрок: {first_name}"
     )
-    
+
     await start_round(context, chat_id)
 
 async def start_round(context, chat_id):
     game = context.chat_data.get('game')
     if not game or game.game_over:
         return
-    
+
     game.phase = "action"
     game.actions_this_round = 0
     game.current_weather = None
-    
+
     for p in game.players.values():
         p.action_taken = False
         p.has_voted = False
         p.vote_target = None
         p.protected_from_shot = False
         p.coffee_active = False
-    
+
     if game.round_num > 1:
         game.first_player_idx = get_next_alive_idx(game, game.first_player_idx)
-    
+
     game.current_player_idx = game.first_player_idx
-    
+
     if not game.weather_deck:
         game.weather_deck = game.weather_discard
         game.weather_discard = []
         random.shuffle(game.weather_deck)
-    
+
     game.current_weather = game.weather_deck.pop()
     game.weather_discard.append(game.current_weather)
-    
+
     weather_texts = {
         WeatherType.SUN_0: "Жаркий солнечный день! Собирать воду нельзя!",
         WeatherType.SUN_1: "Солнечно, небольшая роса",
@@ -421,9 +444,9 @@ async def start_round(context, chat_id):
         WeatherType.RAIN_3: "🌧️ Идёт дождь! Много воды!",
         WeatherType.HURRICANE: "🌪️ УРАГАН! Все на плот! Это конец игры!",
     }
-    
+
     first_name = game.players[game.player_order[game.first_player_idx]].first_name
-    
+
     await context.bot.send_message(
         chat_id,
         f"📅 Раунд {game.round_num}\n"
@@ -432,25 +455,25 @@ async def start_round(context, chat_id):
         f"{format_resources(game)}\n\n"
         f"👑 Первый игрок: {first_name}"
     )
-    
+
     if game.current_weather == WeatherType.HURRICANE:
         game.hurricane_triggered = True
         game.phase = "end"
         await check_end_game(context, chat_id)
         return
-    
+
     await notify_current_player(context, chat_id)
 
 async def notify_current_player(context, chat_id):
     game = context.chat_data.get('game')
     if not game:
         return
-    
+
     player = get_current_player(game)
     if not player or not player.is_alive:
         await next_player(context, chat_id)
         return
-    
+
     if player.is_sick:
         await context.bot.send_message(
             chat_id,
@@ -459,7 +482,7 @@ async def notify_current_player(context, chat_id):
         player.is_sick = False
         await next_player(context, chat_id)
         return
-    
+
     try:
         await context.bot.send_message(
             player.user_id,
@@ -470,22 +493,22 @@ async def notify_current_player(context, chat_id):
         )
     except Exception:
         pass
-    
+
     keyboard = [
         [InlineKeyboardButton("🎣 Поймать рыбу", callback_data=f"act_fish_{player.user_id}")],
         [InlineKeyboardButton("💧 Собрать воду", callback_data=f"act_water_{player.user_id}")],
         [InlineKeyboardButton("🪵 Найти древесину", callback_data=f"act_wood_{player.user_id}")],
         [InlineKeyboardButton("📦 Обыскать обломки", callback_data=f"act_search_{player.user_id}")],
     ]
-    
+
     if player.hand:
         keyboard.append([InlineKeyboardButton("🃏 Использовать карту", callback_data=f"act_usecard_{player.user_id}")])
-    
+
     if CardType.REVOLVER in player.permanent_cards and CardType.BULLET in player.hand:
         keyboard.append([InlineKeyboardButton("🔫 Выстрелить в игрока", callback_data=f"act_shoot_{player.user_id}")])
-    
+
     reply_markup = InlineKeyboardMarkup(keyboard)
-    
+
     await context.bot.send_message(
         chat_id,
         f"▶️ Ходит {player.first_name}!\nВыберите действие:",
@@ -496,45 +519,46 @@ async def next_player(context, chat_id):
     game = context.chat_data.get('game')
     if not game:
         return
-    
+
     game.current_player_idx = get_next_alive_idx(game, game.current_player_idx)
     game.actions_this_round += 1
-    
+
     alive = alive_count(game)
     if game.actions_this_round >= alive:
         await survival_check(context, chat_id)
     else:
         await notify_current_player(context, chat_id)
 
-============================================================================
+
+# ============================================================================
 # ACTION HANDLERS
 # ============================================================================
 
 async def handle_action(update, context):
     query = update.callback_query
     await query.answer()
-    
+
     chat_id = update.effective_chat.id
     game = context.chat_data.get('game')
-    
+
     if not game or game.phase != "action":
         await query.edit_message_text("❌ Сейчас не фаза действий.")
         return
-    
+
     data = query.data
     parts = data.split("_")
     action = parts[1]
     target_id = int(parts[2])
-    
+
     current = get_current_player(game)
     if not current or current.user_id != target_id:
         await query.answer("❌ Сейчас не ваш ход!", show_alert=True)
         return
-    
+
     if current.action_taken and not current.coffee_active:
         await query.answer("❌ Вы уже сходили!", show_alert=True)
         return
-    
+
     if action == "fish":
         await action_fish(query, context, game, current, chat_id)
     elif action == "water":
@@ -552,49 +576,49 @@ async def action_fish(query, context, game, player, chat_id):
     base_fish = random.randint(1, 3)
     bonus = 2 if CardType.FISHING_ROD in player.permanent_cards else 0
     total = base_fish + bonus
-    
+
     game.food += total
     player.action_taken = True
-    
+
     bonus_text = f" (+{bonus} от удочки)" if bonus else ""
-    
+
     await query.edit_message_text(
         f"🎣 {player.first_name} поймал рыбу!\n"
         f"🐟 Вылов: {base_fish}{bonus_text} = {total} рыбки\n"
         f"📊 Запас еды: {game.food}"
     )
-    
+
     await next_player(context, chat_id)
 
 async def action_water(query, context, game, player, chat_id):
     rain = get_weather_rain(game.current_weather)
-    
+
     if rain == 0:
         await query.answer("☀️ Слишком жарко для сбора воды! Выберите другое действие.", show_alert=True)
         return
-    
+
     multiplier = 2 if CardType.FLASK in player.permanent_cards else 1
     total = rain * multiplier
-    
+
     game.water += total
     player.action_taken = True
-    
+
     mult_text = " x2 (фляжка)" if multiplier > 1 else ""
-    
+
     await query.edit_message_text(
         f"💧 {player.first_name} собрал воду!\n"
         f"🌧️ Осадков: {rain}{mult_text} = {total} порций\n"
         f"📊 Запас воды: {game.water}"
     )
-    
+
     await next_player(context, chat_id)
 
 async def action_wood(query, context, game, player, chat_id):
     base_wood = 1
     bonus = 2 if CardType.AXE in player.permanent_cards else 0
-    
+
     snake_bite = random.random() < 0.2
-    
+
     if snake_bite:
         player.is_sick = True
         game.wood += base_wood
@@ -610,22 +634,22 @@ async def action_wood(query, context, game, player, chat_id):
         total = base_wood + bonus + extra
         game.wood += total
         player.action_taken = True
-        
+
         bonus_text = f" +{bonus} (топор)" if bonus else ""
         extra_text = f" +{extra} (удача)" if extra else ""
-        
+
         raft_built = ""
         if game.wood >= 6:
             game.wood -= 6
             game.raft_cards += 1
             raft_built = f"\n🛶 Построена новая секция плота! ({game.raft_cards}/12)"
-        
+
         await query.edit_message_text(
             f"🪵 {player.first_name} нашёл древесину!\n"
             f"🪵 Собрано: {base_wood}{bonus_text}{extra_text} = {total}\n"
             f"📊 Древесина: {game.wood}/6{raft_built}"
         )
-    
+
     await next_player(context, chat_id)
 
 async def action_search(query, context, game, player, chat_id):
@@ -634,7 +658,7 @@ async def action_search(query, context, game, player, chat_id):
         card = cards[0]
         player.hand.append(card)
         player.action_taken = True
-        
+
         await query.edit_message_text(
             f"📦 {player.first_name} обыскал обломки и нашёл:\n"
             f"✨ {get_card_name(card)}\n"
@@ -645,10 +669,11 @@ async def action_search(query, context, game, player, chat_id):
             f"📦 {player.first_name} обыскал обломки, но ничего не нашёл."
         )
         player.action_taken = True
-    
+
     await next_player(context, chat_id)
 
-============================================================================
+
+# ============================================================================
 # CARD USAGE HANDLERS
 # ============================================================================
 
@@ -656,16 +681,16 @@ async def show_usable_cards(query, context, game, player, chat_id):
     if not player.hand:
         await query.answer("У вас нет карт!", show_alert=True)
         return
-    
+
     keyboard = []
     for i, card in enumerate(player.hand):
         keyboard.append([InlineKeyboardButton(
             get_card_name(card),
             callback_data=f"usecard_{i}_{player.user_id}"
         )])
-    
+
     keyboard.append([InlineKeyboardButton("↩️ Отмена", callback_data=f"cancel_use_{player.user_id}")])
-    
+
     await query.edit_message_text(
         f"🃏 Выберите карту для использования:",
         reply_markup=InlineKeyboardMarkup(keyboard)
@@ -674,27 +699,27 @@ async def show_usable_cards(query, context, game, player, chat_id):
 async def handle_use_card(update, context):
     query = update.callback_query
     await query.answer()
-    
+
     data = query.data
     if data.startswith("cancel_use_"):
         await query.edit_message_text("❌ Отменено.")
         return
-    
+
     parts = data.split("_")
     card_idx = int(parts[1])
     user_id = int(parts[2])
-    
+
     chat_id = update.effective_chat.id
     game = context.chat_data.get('game')
     if not game:
         return
-    
+
     player = game.players.get(user_id)
     if not player or card_idx >= len(player.hand):
         return
-    
+
     card = player.hand.pop(card_idx)
-    
+
     if card == CardType.WATER_BOTTLE:
         game.water += 1
         await query.edit_message_text(
@@ -841,7 +866,7 @@ async def handle_use_card(update, context):
             f"☕ {player.first_name} выпил кофе!\n"
             f"⚡ В этом раунде вы можете выполнить 2 действия!"
         )
-        player.action_taken = False  # Может сходить ещё раз
+        player.action_taken = False
         await notify_current_player(context, chat_id)
         return
     elif card == CardType.FRUIT_BASKET:
@@ -849,7 +874,6 @@ async def handle_use_card(update, context):
             f"🍎 {player.first_name} разделил корзину фруктов!\n"
             f"✨ Все робинзоны игнорируют смерть от голода/жажды в этом раунде."
         )
-        # Эффект применяется автоматически в survival_check
     elif card == CardType.MATCHES:
         await query.edit_message_text(
             f"🔥 {player.first_name} зажёг спички!\n"
@@ -892,42 +916,43 @@ async def handle_use_card(update, context):
         await query.edit_message_text(
             f"🃏 {player.first_name} использовал {get_card_name(card)}."
         )
-    
+
     if not player.coffee_active:
         player.action_taken = True
     else:
         player.coffee_active = False
         player.action_taken = True
-    
+
     await next_player(context, chat_id)
 
-============================================================================
+
+# ============================================================================
 # SPECIAL CALLBACK HANDLERS
 # ============================================================================
 
 async def handle_alarm_choice(update, context):
     query = update.callback_query
     await query.answer()
-    
+
     parts = query.data.split("_")
     target_pid = int(parts[1])
     user_id = int(parts[2])
-    
+
     chat_id = update.effective_chat.id
     game = context.chat_data.get('game')
     if not game:
         return
-    
+
     for i, pid in enumerate(game.player_order):
         if pid == target_pid:
             game.first_player_idx = i
             break
-    
+
     target = game.players.get(target_pid)
     await query.edit_message_text(
         f"⏰ Будильник установлен! {target.first_name} будет первым в следующем раунде."
     )
-    
+
     player = game.players.get(user_id)
     if player:
         player.action_taken = True
@@ -936,28 +961,28 @@ async def handle_alarm_choice(update, context):
 async def handle_revive(update, context):
     query = update.callback_query
     await query.answer()
-    
+
     parts = query.data.split("_")
     target_pid = int(parts[1])
     user_id = int(parts[2])
-    
+
     chat_id = update.effective_chat.id
     game = context.chat_data.get('game')
     if not game:
         return
-    
+
     target = game.players.get(target_pid)
     if target:
         target.is_alive = True
         target.is_sick = False
         target.hand = draw_wreckage(game, 2)
-        
+
         await query.edit_message_text(
             f"🧸 Кукла вуду сработала!\n"
             f"✨ {target.first_name} воскрешён из мёртвых!\n"
             f"🎲 Получено 2 новые карты обломков."
         )
-    
+
     player = game.players.get(user_id)
     if player:
         player.action_taken = True
@@ -966,25 +991,24 @@ async def handle_revive(update, context):
 async def handle_pendulum(update, context):
     query = update.callback_query
     await query.answer()
-    
+
     parts = query.data.split("_")
     target_pid = int(parts[1])
     user_id = int(parts[2])
-    
+
     chat_id = update.effective_chat.id
     game = context.chat_data.get('game')
     if not game:
         return
-    
+
     target = game.players.get(target_pid)
     caster = game.players.get(user_id)
-    
+
     if target and caster:
         await query.edit_message_text(
             f"🌀 {caster.first_name} навязал действие {target.first_name}!\n"
             f"{target.first_name}, выберите действие в групповом чате."
         )
-        # Устанавливаем текущего игрока на цель
         for i, pid in enumerate(game.player_order):
             if pid == target_pid:
                 game.current_player_idx = i
@@ -997,16 +1021,16 @@ async def show_shoot_targets(query, context, game, player, chat_id):
     if not targets:
         await query.answer("Некого стрелять!", show_alert=True)
         return
-    
+
     keyboard = []
     for target in targets:
         keyboard.append([InlineKeyboardButton(
             f"🔫 {target.first_name}",
             callback_data=f"shoot_{target.user_id}_{player.user_id}"
         )])
-    
+
     keyboard.append([InlineKeyboardButton("↩️ Отмена", callback_data=f"cancel_shoot_{player.user_id}")])
-    
+
     await query.edit_message_text(
         f"🔫 {player.first_name} направил револьвер...\n"
         f"Выберите жертву:",
@@ -1016,38 +1040,35 @@ async def show_shoot_targets(query, context, game, player, chat_id):
 async def handle_shoot(update, context):
     query = update.callback_query
     await query.answer()
-    
+
     data = query.data
     if data.startswith("cancel_shoot_"):
         await query.edit_message_text("❌ Выстрел отменён.")
         return
-    
+
     parts = data.split("_")
     target_id = int(parts[1])
     shooter_id = int(parts[2])
-    
+
     chat_id = update.effective_chat.id
     game = context.chat_data.get('game')
     if not game:
         return
-    
+
     shooter = game.players.get(shooter_id)
     target = game.players.get(target_id)
-    
+
     if not shooter or not target:
         return
-    
-    # Проверяем наличие пули
+
     if CardType.BULLET not in shooter.hand:
         await query.edit_message_text("❌ Нет патронов!")
         return
-    
+
     shooter.hand.remove(CardType.BULLET)
-    
-    # Проверяем защиту
+
     if target.protected_from_shot or CardType.METAL_PLATE in target.permanent_cards:
         target.protected_from_shot = False
-        # Удаляем металл
         if CardType.METAL_PLATE in target.permanent_cards:
             target.permanent_cards.remove(CardType.METAL_PLATE)
         await query.edit_message_text(
@@ -1057,20 +1078,19 @@ async def handle_shoot(update, context):
         )
     else:
         target.is_alive = False
-        # Передача карт
         game.wreckage_discard.extend(target.hand)
         target.hand = []
         for card in target.permanent_cards:
             if card != CardType.REVOLVER:
                 game.wreckage_discard.append(card)
         target.permanent_cards = []
-        
+
         await query.edit_message_text(
             f"🔫 {shooter.first_name} выстрелил в {target.first_name}!\n"
             f"💀 {target.first_name} погибает от выстрела...\n"
             f"🪦 Покойся с миром, робинзон."
         )
-    
+
     shooter.action_taken = True
     await next_player(context, chat_id)
 
@@ -1082,17 +1102,17 @@ async def survival_check(context, chat_id):
     game = context.chat_data.get('game')
     if not game:
         return
-    
+
     alive = alive_players(game)
     num_alive = len(alive)
-    
+
     await context.bot.send_message(
         chat_id,
         f"🌅 Конец раунда {game.round_num} - проверка выживания!\n"
         f"{format_resources(game)}\n\n"
         f"💧 Распределение воды ({num_alive} робинзонов)"
     )
-    
+
     if game.water >= num_alive:
         game.water -= num_alive
         await context.bot.send_message(
@@ -1110,15 +1130,15 @@ async def distribute_food(context, chat_id):
     game = context.chat_data.get('game')
     if not game:
         return
-    
+
     alive = alive_players(game)
     num_alive = len(alive)
-    
+
     await context.bot.send_message(
         chat_id,
         f"🐟 Распределение еды ({num_alive} робинзонов)"
     )
-    
+
     if game.food >= num_alive:
         game.food -= num_alive
         await context.bot.send_message(
@@ -1136,10 +1156,10 @@ async def start_voting(context, chat_id, reason, shortage):
     game = context.chat_data.get('game')
     if not game:
         return
-    
+
     alive = [p for p in alive_players(game)]
     reason_text = "💧 воды" if reason == "water" else "🐟 еды"
-    
+
     await context.bot.send_message(
         chat_id,
         f"⚠️ НЕХВАТКА {reason_text.upper()}!\n"
@@ -1147,7 +1167,7 @@ async def start_voting(context, chat_id, reason, shortage):
         f"🗳️ Начинается голосование - кого изгнать?\n\n"
         f"Каждый живой игрок должен проголосовать."
     )
-    
+
     for voter in alive:
         keyboard = []
         for target in alive:
@@ -1156,7 +1176,7 @@ async def start_voting(context, chat_id, reason, shortage):
                     f"Изгнать {target.first_name}",
                     callback_data=f"vote_{target.user_id}_{voter.user_id}_{reason}"
                 )])
-        
+
         try:
             await context.bot.send_message(
                 voter.user_id,
@@ -1170,37 +1190,39 @@ async def start_voting(context, chat_id, reason, shortage):
                 chat_id,
                 f"@{voter.username or voter.user_id} - ваш голос (отправлено в ЛС, проверьте):"
             )
+
+
 async def handle_vote(update, context):
     query = update.callback_query
     await query.answer()
-    
+
     parts = query.data.split("_")
     target_id = int(parts[1])
     voter_id = int(parts[2])
     reason = parts[3]
-    
+
     chat_id = update.effective_chat.id
     game = context.chat_data.get('game')
     if not game or game.phase not in ["voting_water", "voting_food"]:
         return
-    
+
     voter = game.players.get(voter_id)
     target = game.players.get(target_id)
-    
+
     if not voter or not voter.is_alive or voter.has_voted:
         await query.answer("❌ Вы уже проголосовали или не можете голосовать!", show_alert=True)
         return
-    
+
     vote_weight = 2 if CardType.CLUB in voter.permanent_cards else 1
-    
+
     game.votes[target_id] = game.votes.get(target_id, 0) + vote_weight
     voter.has_voted = True
     voter.vote_target = target_id
-    
+
     await query.edit_message_text(
         f"✅ Вы проголосовали за изгнание {target.first_name}!"
     )
-    
+
     alive_voters = [p for p in alive_players(game) if not p.has_voted]
     if not alive_voters:
         await resolve_voting(context, chat_id, reason)
@@ -1209,15 +1231,15 @@ async def resolve_voting(context, chat_id, reason):
     game = context.chat_data.get('game')
     if not game:
         return
-    
+
     if not game.votes:
         await context.bot.send_message(chat_id, "🤔 Никто не проголосовал. Странно...")
         await after_voting(context, chat_id, reason)
         return
-    
+
     max_votes = max(game.votes.values())
     candidates = [pid for pid, v in game.votes.items() if v == max_votes]
-    
+
     if len(candidates) > 1:
         first_player = game.players[game.player_order[game.first_player_idx]]
         expelled_id = candidates[0]
@@ -1225,13 +1247,12 @@ async def resolve_voting(context, chat_id, reason):
         await context.bot.send_message(chat_id, tie_text)
     else:
         expelled_id = candidates[0]
-    
+
     expelled = game.players.get(expelled_id)
     if not expelled:
         await after_voting(context, chat_id, reason)
         return
-    
-    # Проверяем раковину
+
     has_shell = CardType.SHELL in expelled.hand
     if has_shell:
         await context.bot.send_message(
@@ -1241,8 +1262,7 @@ async def resolve_voting(context, chat_id, reason):
         )
         await after_voting(context, chat_id, reason)
         return
-    
-    # Проверяем защиту от металла
+
     if expelled.protected_from_shot:
         await context.bot.send_message(
             chat_id,
@@ -1251,23 +1271,21 @@ async def resolve_voting(context, chat_id, reason):
         expelled.protected_from_shot = False
         await after_voting(context, chat_id, reason)
         return
-    
-    # Изгнание
+
     expelled.is_alive = False
-    
-    # Сброс карт
+
     for card in expelled.permanent_cards:
         if card == CardType.REVOLVER:
             game.wreckage_discard.append(card)
         else:
             game.wreckage_discard.append(card)
-    
+
     expelled.permanent_cards = []
     game.wreckage_discard.extend(expelled.hand)
     expelled.hand = []
-    
+
     reason_text = "жажды" if reason == "water" else "голода"
-    
+
     await context.bot.send_message(
         chat_id,
         f"💀 {expelled.first_name} ИЗГНАН!\n"
@@ -1275,14 +1293,14 @@ async def resolve_voting(context, chat_id, reason):
         f"Он погибает в одиночестве...\n\n"
         f"{format_players_list(game)}"
     )
-    
+
     await after_voting(context, chat_id, reason)
 
 async def after_voting(context, chat_id, reason):
     game = context.chat_data.get('game')
     if not game:
         return
-    
+
     alive = alive_players(game)
     if len(alive) == 0:
         await context.bot.send_message(
@@ -1293,10 +1311,8 @@ async def after_voting(context, chat_id, reason):
         )
         game.game_over = True
         return
-    
-    # Проверяем, нужно ли ещё голосовать
+
     if reason == "water":
-        # После голосования за воду проверяем еду
         await distribute_food(context, chat_id)
     else:
         await check_end_game(context, chat_id)
@@ -1309,10 +1325,10 @@ async def check_end_game(context, chat_id):
     game = context.chat_data.get('game')
     if not game:
         return
-    
+
     alive = alive_players(game)
     num_alive = len(alive)
-    
+
     if num_alive == 0:
         await context.bot.send_message(
             chat_id,
@@ -1321,16 +1337,13 @@ async def check_end_game(context, chat_id):
         )
         game.game_over = True
         return
-    
-    # Условия победы (покидание острова)
-    # 1. Есть достаточно карт плота
-    # 2. Есть по 1 порции воды и еды на каждого
+
     can_leave = (
         game.raft_cards >= num_alive and
         game.water >= num_alive and
         game.food >= num_alive
     )
-    
+
     if can_leave and not game.hurricane_triggered:
         await context.bot.send_message(
             chat_id,
@@ -1342,9 +1355,8 @@ async def check_end_game(context, chat_id):
         )
         game.phase = "decision"
         return
-    
+
     if game.hurricane_triggered:
-        # Проверяем, можно ли уплыть при урагане
         if can_leave:
             game.winners = [p.user_id for p in alive]
             winner_names = ", ".join([p.first_name for p in alive])
@@ -1358,7 +1370,6 @@ async def check_end_game(context, chat_id):
             game.game_over = True
             return
         else:
-            # Нужно голосовать, чтобы осталось меньше людей
             needed = min(num_alive, game.raft_cards)
             to_expel = num_alive - needed
             if to_expel > 0:
@@ -1380,8 +1391,7 @@ async def check_end_game(context, chat_id):
                 )
                 game.game_over = True
                 return
-    
-    # Новый раунд
+
     game.round_num += 1
     await context.bot.send_message(
         chat_id,
@@ -1391,7 +1401,8 @@ async def check_end_game(context, chat_id):
     )
     await start_round(context, chat_id)
 
-============================================================================
+
+# ============================================================================
 # TELEGRAM COMMAND HANDLERS
 # ============================================================================
 
@@ -1412,11 +1423,11 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def newgame_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     user = update.effective_user
-    
+
     if update.effective_chat.type == "private":
         await update.message.reply_text("❌ Игра создаётся только в групповом чате!")
         return
-    
+
     game = GameState(chat_id=chat_id)
     player = Player(
         user_id=user.id,
@@ -1426,7 +1437,7 @@ async def newgame_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     game.players[user.id] = player
     game.player_order.append(user.id)
     context.chat_data['game'] = game
-    
+
     await update.message.reply_text(
         f"🌴 НОВАЯ ИГРА СОЗДАНА!\n\n"
         f"👤 Организатор: {user.first_name}\n"
@@ -1439,23 +1450,23 @@ async def join_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     user = update.effective_user
     game = context.chat_data.get('game')
-    
+
     if not game:
         await update.message.reply_text("❌ Сначала создайте игру командой /newgame")
         return
-    
+
     if game.phase != "lobby":
         await update.message.reply_text("❌ Игра уже идёт! Дождитесь окончания.")
         return
-    
+
     if user.id in game.players:
         await update.message.reply_text("❌ Вы уже в игре!")
         return
-    
+
     if len(game.players) >= 12:
         await update.message.reply_text("❌ Достигнут максимум игроков (12)!")
         return
-    
+
     player = Player(
         user_id=user.id,
         username=user.username or "",
@@ -1463,7 +1474,7 @@ async def join_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     game.players[user.id] = player
     game.player_order.append(user.id)
-    
+
     await update.message.reply_text(
         f"✅ {user.first_name} присоединился!\n"
         f"👥 Игроков: {len(game.players)}/12"
@@ -1472,25 +1483,25 @@ async def join_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def startgame_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     game = context.chat_data.get('game')
-    
+
     if not game:
         await update.message.reply_text("❌ Сначала создайте игру: /newgame")
         return
-    
+
     if game.phase != "lobby":
         await update.message.reply_text("❌ Игра уже идёт!")
         return
-    
+
     await start_game_logic(context, chat_id)
 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     game = context.chat_data.get('game')
-    
+
     if not game:
         await update.message.reply_text("❌ Нет активной игры. Создайте: /newgame")
         return
-    
+
     if game.phase == "lobby":
         await update.message.reply_text(
             f"🌴 Лобби игры\n\n"
@@ -1499,7 +1510,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Начать: /startgame (нужно 3+)"
         )
         return
-    
+
     await update.message.reply_text(
         f"📅 Раунд {game.round_num} | Фаза: {game.phase}\n\n"
         f"{format_resources(game)}\n\n"
@@ -1509,25 +1520,23 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def hand_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    chat_id = update.effective_chat.id
-    
-    # Ищем игру в чате
+
     game = None
     for chat_data in context.application.chat_data.values():
         g = chat_data.get('game')
         if g and user.id in g.players:
             game = g
             break
-    
+
     if not game:
         await update.message.reply_text("❌ Вы не участвуете ни в одной игре.")
         return
-    
+
     player = game.players.get(user.id)
     if not player:
         await update.message.reply_text("❌ Вы не в игре.")
         return
-    
+
     await update.message.reply_text(format_player_hand(player))
 
 async def rules_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1558,11 +1567,11 @@ async def rules_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def leave_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     game = context.chat_data.get('game')
-    
+
     if not game or game.phase != "decision":
         await update.message.reply_text("❌ Сейчас нельзя покинуть остров.")
         return
-    
+
     alive = alive_players(game)
     winner_names = ", ".join([p.first_name for p in alive])
     await update.message.reply_text(
@@ -1575,11 +1584,11 @@ async def leave_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def stay_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     game = context.chat_data.get('game')
-    
+
     if not game or game.phase != "decision":
         await update.message.reply_text("❌ Сейчас нельзя остаться.")
         return
-    
+
     game.phase = "action"
     game.round_num += 1
     await update.message.reply_text(
@@ -1597,9 +1606,9 @@ def main():
         print("❌ Укажите BOT_TOKEN в файле .env!")
         print("Создайте бота через @BotFather и получите токен.")
         return
-    
+
     application = Application.builder().token(BOT_TOKEN).build()
-    
+
     # Commands
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("newgame", newgame_command))
@@ -1610,7 +1619,7 @@ def main():
     application.add_handler(CommandHandler("rules", rules_command))
     application.add_handler(CommandHandler("leave", leave_command))
     application.add_handler(CommandHandler("stay", stay_command))
-    
+
     # Callback handlers
     application.add_handler(CallbackQueryHandler(handle_action, pattern=r"^act_"))
     application.add_handler(CallbackQueryHandler(handle_use_card, pattern=r"^usecard_"))
@@ -1621,7 +1630,7 @@ def main():
     application.add_handler(CallbackQueryHandler(handle_shoot, pattern=r"^shoot_"))
     application.add_handler(CallbackQueryHandler(handle_shoot, pattern=r"^cancel_shoot_"))
     application.add_handler(CallbackQueryHandler(handle_vote, pattern=r"^vote_"))
-    
+
     # Bot commands menu
     commands = [
         BotCommand("start", "Начать работу с ботом"),
@@ -1632,15 +1641,15 @@ def main():
         BotCommand("hand", "Мои карты (в ЛС)"),
         BotCommand("rules", "Правила игры"),
     ]
-    
+
     async def post_init(app):
         await app.bot.set_my_commands(commands)
-    
+
     application.post_init = post_init
-    
+
     print("🌴 Робинзонада бот запущен!")
     print("Нажмите Ctrl+C для остановки.")
-    
+
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
